@@ -18,6 +18,7 @@ from delta.evalh.dataset import (
     spider_available,
 )
 from delta.evalh.evaluate import evaluate_prompt
+from delta.evalh.sample import stratified_sample
 from delta.llm.providers import MissingAPIKeyError, build_client
 from delta.report import print_failures, print_report
 from delta.target_agent.agent import TargetAgent
@@ -32,9 +33,11 @@ console = Console()
 PROMPTS = {"v0": V0_WEAK, "handtuned": V_HANDTUNED}
 
 
-def _load(dataset: str, limit: int | None):
+def _load(dataset: str, limit: int | None, seed: int = 0):
     examples = load_spider("dev") if dataset == "spider" else load_sample()
-    return examples[:limit] if limit else examples
+    if limit is None:
+        return examples
+    return stratified_sample(examples, limit, seed=seed)
 
 
 @app.command()
@@ -42,7 +45,8 @@ def diagnose(
     dataset: str = typer.Option("sample", help="'sample' or 'spider'"),
     prompt: str = typer.Option("v0", help=f"one of {', '.join(PROMPTS)}"),
     mock: bool = typer.Option(False, "--mock", help="use the offline model, no API key needed"),
-    limit: int | None = typer.Option(None, help="evaluate only the first N examples"),
+    limit: int | None = typer.Option(None, help="seeded stratified sample of N examples"),
+    seed: int = typer.Option(0, help="RNG seed for --limit"),
     show_failures: int = typer.Option(5, help="how many failures to print"),
 ) -> None:
     """Score a prompt and show where it fails."""
@@ -57,7 +61,7 @@ def diagnose(
         raise typer.Exit(1)
 
     try:
-        examples = _load(dataset, limit)
+        examples = _load(dataset, limit, seed=seed)
     except DatasetNotAvailableError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc

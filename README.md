@@ -5,17 +5,19 @@ analysis, and accepts a change **only when a statistical test on held-out data s
 
 Named for the thing it measures: the delta, with a confidence interval.
 
-> **Status: under construction.** Phase 0 of 8. Results table lands in Phase 5.
+> **Status:** Phases 0–2 complete of 8. Measurement core, seeded splits, stats, and
+> decoupled acceptance gate are in place. Optimizer agents (analyzer/proposer) are next.
+> Tag `v0.2`.
 
 ## The idea in one paragraph
 
 A target agent writes SQL. Most portfolio prompt-tuning projects stop at "I changed the prompt and
 the number went up," which is usually noise. Delta instead treats each proposed prompt as a
 hypothesis: an analyzer agent reads the failing traces and diagnoses *why* they fail, a proposer
-agent drafts a candidate prompt, and an acceptance gate runs a paired bootstrap and a McNemar test
-on a held-out set. Candidates that cannot clear significance, or that regress any difficulty
-bucket, are rejected and logged with the reason. The optimizer is then benchmarked head-to-head
-against DSPy's MIPROv2 and GEPA on identical splits.
+agent drafts a candidate prompt, and an acceptance gate decides whether to keep it. Search uses a
+permissive rule (point improvement, no per-difficulty regression); the paired bootstrap and McNemar
+test run once on the held-out test set. The optimizer is then benchmarked head-to-head against
+DSPy's MIPROv2 and GEPA on identical splits.
 
 ## Honest positioning
 
@@ -42,11 +44,18 @@ For real runs you need two free API keys, neither requiring a credit card:
 [console.groq.com](https://console.groq.com) and
 [aistudio.google.com](https://aistudio.google.com). Copy `.env.example` to `.env` and fill them in.
 
+Then:
+
+```bash
+make spider
+python scripts/run_real_path.py    # 100 stratified examples; headroom gate
+```
+
 ## Cost
 
-$0. The target agent runs on Groq's free tier (`llama-3.1-8b-instant`, 14,400 requests/day) and the
-reflection agents on Gemini's free tier (1,500 requests/day). Every model response is cached to
-disk by content hash, so reruns are free and deterministic. See [docs/COST.md](docs/COST.md).
+$0 on free tiers. The binding Groq limit is **tokens** (6k TPM / 500k TPD), not requests.
+Evaluation groups examples by database so Groq's automatic prefix cache absorbs the schema cost.
+See [docs/COST.md](docs/COST.md) and `results/token_distribution.json`.
 
 ## Benchmark
 
@@ -54,6 +63,13 @@ disk by content hash, so reruns are free and deterministic. See [docs/COST.md](d
 BIRD and Spider 2.0 deliberately: a [CIDR 2026 paper](https://www.cidrdb.org/cidr2026/papers/p5-jin.pdf)
 found annotation error rates of 52.8% in BIRD Mini-Dev and 62.8% in Spider 2.0-Snow, which makes
 small measured deltas on those sets untrustworthy.
+
+Seeded splits live in [`data/splits.json`](data/splits.json): 100 train / ~350 val / ~400 test,
+with validation and test disjoint by database.
+
+## Project log
+
+The full plan, architecture, and implementation notes are in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## License
 

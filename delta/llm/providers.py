@@ -13,7 +13,7 @@ optimization loop) runs offline in CI at zero cost.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Protocol
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -44,10 +44,20 @@ class LLMResponse:
     latency_ms: float = 0.0
     cached: bool = False
     stop_reason: str | None = None
+    # Input tokens the provider served from its own prefix cache. Groq excludes
+    # these from its rate limits, so this is the number that determines whether
+    # a run fits in the free tier, and it is the direct evidence that grouping
+    # examples by database is working.
+    cache_read_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+    @property
+    def billable_tokens(self) -> int:
+        """Tokens that count against the provider's rate limits."""
+        return max(0, self.input_tokens - self.cache_read_tokens) + self.output_tokens
 
 
 class ModelClient(Protocol):
@@ -129,6 +139,7 @@ class StrandsClient:
             latency_ms=latency_ms,
             cached=False,
             stop_reason=getattr(result, "stop_reason", None),
+            cache_read_tokens=_usage(result, "cacheReadInputTokens"),
         )
 
     def complete(self, system_prompt: str, user_prompt: str) -> LLMResponse:
@@ -137,7 +148,10 @@ class StrandsClient:
         )
         hit = self.cache.get(key)
         if hit is not None:
-            return LLMResponse(**{**hit, "cached": True})
+            # Tolerate entries written by an older field set, so adding a field
+            # does not invalidate an expensively accumulated cache.
+            known = {f.name for f in fields(LLMResponse)} - {"cached"}
+            return LLMResponse(**{k: v for k, v in hit.items() if k in known}, cached=True)
 
         response = self._invoke(system_prompt, user_prompt)
         self.cache.put(
@@ -149,6 +163,7 @@ class StrandsClient:
                 "output_tokens": response.output_tokens,
                 "latency_ms": response.latency_ms,
                 "stop_reason": response.stop_reason,
+                "cache_read_tokens": response.cache_read_tokens,
             },
         )
         return response

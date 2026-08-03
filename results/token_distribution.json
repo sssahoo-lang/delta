@@ -1,0 +1,194 @@
+{
+  "method": "chars//4 estimate (offline; not an API tokenizer)",
+  "per_db": [
+    {
+      "db_id": "battle_death",
+      "n": 16,
+      "tables": 3,
+      "schema_tok_est": 135,
+      "msg_tok_est": 153,
+      "full_v0_tok_est": 180,
+      "full_ht_tok_est": 350
+    },
+    {
+      "db_id": "car_1",
+      "n": 92,
+      "tables": 6,
+      "schema_tok_est": 240,
+      "msg_tok_est": 255,
+      "full_v0_tok_est": 282,
+      "full_ht_tok_est": 452
+    },
+    {
+      "db_id": "concert_singer",
+      "n": 45,
+      "tables": 4,
+      "schema_tok_est": 188,
+      "msg_tok_est": 202,
+      "full_v0_tok_est": 230,
+      "full_ht_tok_est": 399
+    },
+    {
+      "db_id": "course_teach",
+      "n": 30,
+      "tables": 3,
+      "schema_tok_est": 114,
+      "msg_tok_est": 129,
+      "full_v0_tok_est": 156,
+      "full_ht_tok_est": 326
+    },
+    {
+      "db_id": "cre_Doc_Template_Mgt",
+      "n": 84,
+      "tables": 4,
+      "schema_tok_est": 238,
+      "msg_tok_est": 253,
+      "full_v0_tok_est": 281,
+      "full_ht_tok_est": 450
+    },
+    {
+      "db_id": "dog_kennels",
+      "n": 82,
+      "tables": 8,
+      "schema_tok_est": 530,
+      "msg_tok_est": 553,
+      "full_v0_tok_est": 580,
+      "full_ht_tok_est": 750
+    },
+    {
+      "db_id": "employee_hire_evaluation",
+      "n": 38,
+      "tables": 4,
+      "schema_tok_est": 173,
+      "msg_tok_est": 188,
+      "full_v0_tok_est": 215,
+      "full_ht_tok_est": 384
+    },
+    {
+      "db_id": "flight_2",
+      "n": 80,
+      "tables": 3,
+      "schema_tok_est": 132,
+      "msg_tok_est": 153,
+      "full_v0_tok_est": 180,
+      "full_ht_tok_est": 350
+    },
+    {
+      "db_id": "museum_visit",
+      "n": 18,
+      "tables": 3,
+      "schema_tok_est": 118,
+      "msg_tok_est": 135,
+      "full_v0_tok_est": 163,
+      "full_ht_tok_est": 332
+    },
+    {
+      "db_id": "network_1",
+      "n": 56,
+      "tables": 3,
+      "schema_tok_est": 125,
+      "msg_tok_est": 141,
+      "full_v0_tok_est": 168,
+      "full_ht_tok_est": 338
+    },
+    {
+      "db_id": "orchestra",
+      "n": 40,
+      "tables": 4,
+      "schema_tok_est": 212,
+      "msg_tok_est": 227,
+      "full_v0_tok_est": 254,
+      "full_ht_tok_est": 423
+    },
+    {
+      "db_id": "pets_1",
+      "n": 42,
+      "tables": 3,
+      "schema_tok_est": 118,
+      "msg_tok_est": 140,
+      "full_v0_tok_est": 167,
+      "full_ht_tok_est": 336
+    },
+    {
+      "db_id": "poker_player",
+      "n": 40,
+      "tables": 2,
+      "schema_tok_est": 93,
+      "msg_tok_est": 109,
+      "full_v0_tok_est": 136,
+      "full_ht_tok_est": 306
+    },
+    {
+      "db_id": "real_estate_properties",
+      "n": 4,
+      "tables": 5,
+      "schema_tok_est": 441,
+      "msg_tok_est": 460,
+      "full_v0_tok_est": 487,
+      "full_ht_tok_est": 657
+    },
+    {
+      "db_id": "singer",
+      "n": 30,
+      "tables": 2,
+      "schema_tok_est": 83,
+      "msg_tok_est": 98,
+      "full_v0_tok_est": 125,
+      "full_ht_tok_est": 294
+    },
+    {
+      "db_id": "student_transcripts_tracking",
+      "n": 78,
+      "tables": 11,
+      "schema_tok_est": 756,
+      "msg_tok_est": 777,
+      "full_v0_tok_est": 805,
+      "full_ht_tok_est": 974
+    },
+    {
+      "db_id": "tvshow",
+      "n": 62,
+      "tables": 3,
+      "schema_tok_est": 178,
+      "msg_tok_est": 199,
+      "full_v0_tok_est": 226,
+      "full_ht_tok_est": 396
+    },
+    {
+      "db_id": "voter_1",
+      "n": 15,
+      "tables": 3,
+      "schema_tok_est": 130,
+      "msg_tok_est": 144,
+      "full_v0_tok_est": 171,
+      "full_ht_tok_est": 341
+    },
+    {
+      "db_id": "world_1",
+      "n": 120,
+      "tables": 3,
+      "schema_tok_est": 193,
+      "msg_tok_est": 219,
+      "full_v0_tok_est": 247,
+      "full_ht_tok_est": 416
+    },
+    {
+      "db_id": "wta_1",
+      "n": 62,
+      "tables": 3,
+      "schema_tok_est": 264,
+      "msg_tok_est": 280,
+      "full_v0_tok_est": 307,
+      "full_ht_tok_est": 477
+    }
+  ],
+  "summary": {
+    "n_dev": 1034,
+    "n_dbs": 20,
+    "weighted_mean_schema_tok": 250.2,
+    "weighted_mean_msg_tok": 268.9,
+    "weighted_mean_full_v0_tok": 296.2,
+    "one_pass_no_prefix_cache_tok": 306283,
+    "one_pass_with_prefix_cache_tok_est": 24304
+  }
+}

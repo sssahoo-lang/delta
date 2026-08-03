@@ -9,6 +9,7 @@ dist/
 
 # Spider is 206 MB and redistributable but not ours to vendor.
 data/spider_data/
+data/__MACOSX/
 data/*.zip
 
 # Per-run artifacts. Only curated outputs in results/ are committed.

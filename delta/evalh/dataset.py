@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from delta.config import SAMPLE_DB, SAMPLE_QUESTIONS, SPIDER_DIR
+from delta.evalh.buckets import hardness_from_parsed, hardness_from_sql
 
 UNKNOWN_DIFFICULTY = "unknown"
 
@@ -72,8 +73,9 @@ def spider_available() -> bool:
 def load_spider(split: str = "dev") -> list[Example]:
     """Spider examples for ``split`` ("dev" or "train").
 
-    Difficulty is left unset here; Phase 2's bucketing assigns it from the gold
-    SQL's structure, so that the labeling logic lives in exactly one place.
+    Difficulty comes from the ``sql`` field Spider ships alongside each question,
+    which is the same pre-parsed structure the official evaluator consumes, so
+    the labels here are the official ones rather than an approximation.
     """
     filename = {"dev": "dev.json", "train": "train_spider.json"}.get(split)
     if filename is None:
@@ -95,6 +97,12 @@ def load_spider(split: str = "dev") -> list[Example]:
             # A handful of Spider databases are known to be absent from some
             # mirrors. Skipping is correct; silently scoring them wrong is not.
             continue
+        parsed = row.get("sql")
+        difficulty = (
+            hardness_from_parsed(parsed)
+            if isinstance(parsed, dict)
+            else hardness_from_sql(row["query"])
+        )
         examples.append(
             Example(
                 id=f"{split}-{i:05d}",
@@ -102,6 +110,7 @@ def load_spider(split: str = "dev") -> list[Example]:
                 gold=row["query"],
                 db_id=db_id,
                 db_path=db_path,
+                difficulty=difficulty,
             )
         )
     return examples

@@ -34,6 +34,7 @@ from delta.evalh.dataset import (  # noqa: E402
     spider_available,
 )
 from delta.evalh.evaluate import evaluate_prompt  # noqa: E402
+from delta.evalh.sample import stratified_sample  # noqa: E402
 from delta.llm.providers import MissingAPIKeyError, build_client  # noqa: E402
 from delta.report import print_failures, print_report  # noqa: E402
 from delta.target_agent.agent import TargetAgent  # noqa: E402
@@ -49,7 +50,18 @@ def parse_args() -> argparse.Namespace:
         default="sample",
         help="offline fixture (default) or Spider dev",
     )
-    p.add_argument("--limit", type=int, default=None, help="evaluate only the first N examples")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="evaluate a seeded stratified sample of N examples (not the first N)",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="RNG seed for --limit stratified sampling",
+    )
     p.add_argument(
         "--compare",
         action="store_true",
@@ -76,7 +88,9 @@ def main() -> int:
         return 1
 
     if args.limit:
-        examples = examples[: args.limit]
+        # Spider dev is grouped by database; taking the first N would sample one
+        # or two schemas. Stratify so a smoke check is a real cross-section.
+        examples = stratified_sample(examples, args.limit, seed=args.seed)
 
     model_id = MOCK_MODEL if args.mock else settings.target_model
     try:

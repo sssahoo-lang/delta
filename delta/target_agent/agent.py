@@ -44,6 +44,15 @@ _PROSE_PREFIXES = (
     "assumption",
 )
 
+# Markdown decoration the model wraps prose in. Stripped before matching the
+# prefixes above, since Llama writes "**Explanation:**" far more often than a
+# bare "Explanation:" and the bold markers would otherwise defeat the match.
+_MARKDOWN_DECORATION = "*_`# \t"
+
+# A trailing explanation is often a bulleted list rather than a sentence. Real
+# SQL lines never start this way once leading whitespace is removed.
+_BULLET_RE = re.compile(r"^(?:[-*+]\s+\w|\d+\.\s+\w)")
+
 
 def extract_sql(text: str) -> str:
     """Pull a single SQL statement out of arbitrary model output.
@@ -69,7 +78,7 @@ def extract_sql(text: str) -> str:
 
     # A semicolon ends the statement; anything after it is commentary or a
     # second query we do not want.
-    semicolon = candidate.find(";")
+    semicolon = _statement_end(candidate)
     if semicolon != -1:
         candidate = candidate[:semicolon]
     else:
@@ -78,14 +87,43 @@ def extract_sql(text: str) -> str:
     return " ".join(candidate.split()).strip()
 
 
+def _statement_end(candidate: str) -> int:
+    """Index of the semicolon ending the statement, or -1.
+
+    Semicolons inside string literals do not end anything. Truncating at one
+    would silently corrupt an otherwise correct query into a syntax error, which
+    the scorer would then charge to the prompt.
+    """
+    in_string = False
+    i = 0
+    while i < len(candidate):
+        char = candidate[i]
+        if char == "'":
+            # SQL escapes a quote by doubling it, so '' stays inside the string.
+            if in_string and i + 1 < len(candidate) and candidate[i + 1] == "'":
+                i += 2
+                continue
+            in_string = not in_string
+        elif char == ";" and not in_string:
+            return i
+        i += 1
+    return -1
+
+
+def _is_prose_line(line: str) -> bool:
+    stripped = line.strip().lstrip(_MARKDOWN_DECORATION).strip().lower()
+    if not stripped:
+        return False
+    return stripped.startswith(_PROSE_PREFIXES) or bool(_BULLET_RE.match(line.strip()))
+
+
 def _trim_trailing_prose(candidate: str) -> str:
     kept: list[str] = []
     for line in candidate.splitlines():
-        lowered = line.strip().lower()
-        if lowered.startswith(_PROSE_PREFIXES):
+        if _is_prose_line(line):
             break
         # A blank line followed by prose is the usual shape of an explanation.
-        if not lowered and kept:
+        if not line.strip() and kept:
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -118,6 +156,10 @@ class GenerationResult:
     @property
     def cached(self) -> bool:
         return self.response.cached
+
+    @property
+    def cache_read_tokens(self) -> int:
+        return self.response.cache_read_tokens
 
 
 class TargetAgent:

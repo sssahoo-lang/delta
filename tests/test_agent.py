@@ -57,6 +57,61 @@ class TestExtractSQL:
         assert extract_sql("SQL: SELECT a FROM t") == "SELECT a FROM t"
 
 
+class TestExtractSQLRealModelPatterns:
+    """Output shapes an instruction-tuned model actually produces.
+
+    Each of these would otherwise be scored as a wrong answer for a query that
+    is in fact correct, which would understate the baseline and inflate every
+    later improvement.
+    """
+
+    def test_markdown_bold_explanation_header_is_dropped(self):
+        text = "SELECT a FROM t\n\n**Explanation:**\nThis picks column a."
+        assert extract_sql(text) == "SELECT a FROM t"
+
+    def test_markdown_heading_note_is_dropped(self):
+        text = "SELECT a FROM t\n\n### Note:\nAssumes t exists."
+        assert extract_sql(text) == "SELECT a FROM t"
+
+    def test_bulleted_explanation_is_dropped(self):
+        text = "SELECT a FROM t\n\n- Selects column a\n- From table t"
+        assert extract_sql(text) == "SELECT a FROM t"
+
+    def test_numbered_explanation_is_dropped(self):
+        text = "SELECT a FROM t\n\n1. First we select a\n2. Then we read t"
+        assert extract_sql(text) == "SELECT a FROM t"
+
+    def test_semicolon_inside_string_literal_is_not_a_statement_end(self):
+        text = "SELECT a FROM t WHERE name = 'Smith; Jones'"
+        assert extract_sql(text) == text
+
+    def test_semicolon_after_a_literal_still_terminates(self):
+        text = "SELECT a FROM t WHERE name = 'a;b'; This query filters rows."
+        assert extract_sql(text) == "SELECT a FROM t WHERE name = 'a;b'"
+
+    def test_escaped_quote_inside_literal_is_handled(self):
+        text = "SELECT a FROM t WHERE name = 'O''Brien; Co'"
+        assert extract_sql(text) == text
+
+    def test_fenced_block_between_prose_on_both_sides(self):
+        text = (
+            "Sure! Here is the query you asked for:\n\n"
+            "```sql\nSELECT a FROM t\n```\n\n"
+            "Let me know if you need anything else."
+        )
+        assert extract_sql(text) == "SELECT a FROM t"
+
+    def test_unterminated_fence_from_a_truncated_response(self):
+        """max_tokens can cut the response before the closing fence."""
+        text = "```sql\nSELECT a FROM t WHERE b = 1"
+        assert extract_sql(text) == "SELECT a FROM t WHERE b = 1"
+
+    def test_select_star_on_its_own_line_survives(self):
+        """The bullet heuristic must not eat legitimate SQL."""
+        text = "SELECT\n*\nFROM t"
+        assert extract_sql(text) == "SELECT * FROM t"
+
+
 class TestTargetAgent:
     def test_generates_sql_from_a_question(self, sample_db):
         agent = TargetAgent(client=build_client("mock/deterministic"), prompt=V0_WEAK)

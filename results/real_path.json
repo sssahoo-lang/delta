@@ -1,0 +1,7 @@
+{
+  "status": "blocked_missing_api_key",
+  "n": 100,
+  "seed": 0,
+  "min_headroom": 0.1,
+  "note": "Token distribution measured offline (see token_distribution.json). Set GROQ_API_KEY and run: python scripts/run_real_path.py"
+}

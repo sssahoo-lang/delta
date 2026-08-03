@@ -7,29 +7,39 @@ which punishes correct queries written differently.
 
 Three comparison rules, following the official Spider evaluator:
 
-- Rows are compared as a **multiset** unless the gold query contains ``ORDER BY``,
-  in which case order is significant. Duplicate rows are meaningful either way.
+- Rows are compared as a **multiset** unless the gold query's *outermost*
+  ``ORDER BY`` makes order significant. An ``ORDER BY`` inside a subquery does
+  not count. Duplicate rows are meaningful either way.
 - **Column order is not significant.** ``SELECT name, age`` and ``SELECT age, name``
   both answer "names and ages", so a permutation search is used when the direct
   comparison fails.
 - Values are **normalized** before comparison so that ``3`` and ``3.0`` match, and
   so float noise from different aggregation paths does not cause false negatives.
 
-Deliberate divergence from the official evaluator, documented here because it
-affects the reported numbers: the official *test-suite* metric executes against
-several synthetically perturbed copies of each database to catch predictions that
-are only accidentally right on the shipped data. Delta scores against the single
-shipped database, which makes it marginally more generous. It is applied
-identically to every condition being compared, so it does not bias the deltas
-between them, which is what this project actually measures.
+Deliberate divergences from the official evaluator, documented here because they
+affect the reported numbers:
+
+1. The official *test-suite* metric executes against several synthetically
+   perturbed copies of each database to catch predictions that are only
+   accidentally right on the shipped data. Delta scores against the single
+   shipped database, which is marginally more generous.
+2. Numeric strings are coerced to floats before comparison (``'3'`` matches
+   ``3``). The official evaluator is stricter about types. Models sometimes
+   quote numbers that SQLite still treats numerically; this avoids punishing
+   that harmless style difference.
+
+Both are applied identically to every condition being compared, so they do not
+bias the deltas between them, which is what this project actually measures.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from itertools import permutations
 from pathlib import Path
+
+import sqlglot
+from sqlglot import exp
 
 from delta.evalh.execute import DEFAULT_MAX_ROWS, DEFAULT_TIMEOUT_S, ExecResult, execute_sql
 
@@ -38,8 +48,6 @@ from delta.evalh.execute import DEFAULT_MAX_ROWS, DEFAULT_TIMEOUT_S, ExecResult,
 MAX_PERMUTATION_COLUMNS = 6
 
 FLOAT_PRECISION = 6
-
-_ORDER_BY_RE = re.compile(r"\border\s+by\b", re.IGNORECASE)
 
 
 class ScoreReason:
@@ -59,8 +67,35 @@ class ScoreResult:
 
 
 def gold_is_ordered(gold_sql: str) -> bool:
-    """Whether the gold query's row order is part of the correct answer."""
-    return bool(_ORDER_BY_RE.search(gold_sql or ""))
+    """Whether the gold query's *outermost* row order is part of the answer.
+
+    An ``ORDER BY`` inside a subquery (for example to support ``LIMIT`` before
+    an aggregate) does not make the outer result ordered. Matching the keyword
+    anywhere would score such gold order-sensitively and punish correct
+    unordered predictions.
+    """
+    if not (gold_sql or "").strip():
+        return False
+    try:
+        root = sqlglot.parse_one(gold_sql, read="sqlite")
+    except Exception:
+        return "order by" in gold_sql.lower()
+    # Walk set-op peers; any top-level SELECT with ORDER BY counts.
+    set_ops = (exp.Union, exp.Intersect, exp.Except)
+    stack: list = [root]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, exp.Select):
+            if node.args.get("order") is not None:
+                return True
+        elif isinstance(node, set_ops):
+            if node.this is not None:
+                stack.append(node.this)
+            if node.expression is not None:
+                stack.append(node.expression)
+        elif isinstance(node, exp.Subquery) and node.this is not None:
+            stack.append(node.this)
+    return False
 
 
 def _normalize_value(value: object) -> object:

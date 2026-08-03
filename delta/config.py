@@ -30,6 +30,7 @@ SPIDER_DIR = DATA_DIR / "spider_data"
 SPLITS_PATH = DATA_DIR / "splits.json"
 
 # The model that writes SQL. Cheap and fast, because it is called constantly.
+# Free-tier binding limit is tokens (6k TPM / 500k TPD), not the 14.4k RPD.
 TARGET_MODEL = "groq/llama-3.1-8b-instant"
 
 # The models that read failures and propose prompt edits. Published ablations
@@ -66,11 +67,28 @@ class GenerationParams:
 
 @dataclass(frozen=True)
 class Budget:
-    """Hard stops so a runaway loop cannot exhaust a daily quota."""
+    """Hard stops so a runaway loop cannot exhaust a daily quota.
 
-    max_target_calls: int = 12_000
+    Tracked in **tokens as well as requests**, because on Spider the token caps
+    bind first and by a wide margin. Measured over the dev set, an uncached call
+    averages 494 tokens, so Groq's 500,000 tokens/day allows about 1,000 calls
+    rather than the 14,400 its request cap suggests, and its 6,000 tokens/minute
+    allows about 12 calls/minute rather than 30. A request-only budget would let
+    a run believe it had 14x the quota it really has.
+
+    ``max_target_calls`` covers the full six-condition experiment: roughly 9,750
+    calls each for the Delta search, the random-search ablation, MIPROv2 and
+    GEPA, plus 2,400 for final test scoring, with headroom for retries.
+    """
+
+    max_target_calls: int = 50_000
     max_reflection_calls: int = 400
     max_wall_clock_s: float = 3 * 60 * 60
+
+    # Billable tokens, so provider-side prefix-cached tokens do not count. One
+    # free-tier day is 500,000; this ceiling is a stop for a single run, not for
+    # the whole project.
+    max_billable_tokens: int = 450_000
 
 
 @dataclass(frozen=True)

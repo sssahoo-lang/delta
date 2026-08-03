@@ -40,18 +40,27 @@ class ExampleResult:
     latency_ms: float = 0.0
     cached: bool = False
     detail: str | None = None
+    db_id: str = ""
+    cache_read_tokens: int = 0
+
+    @property
+    def billable_tokens(self) -> int:
+        """Tokens counting against the provider's rate limits."""
+        return max(0, self.input_tokens - self.cache_read_tokens) + self.output_tokens
 
     def to_dict(self) -> dict:
         return {
             "example_id": self.example_id,
             "question": self.question,
             "difficulty": self.difficulty,
+            "db_id": self.db_id,
             "gold": self.gold,
             "predicted": self.predicted,
             "correct": self.correct,
             "reason": self.reason,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
             "latency_ms": round(self.latency_ms, 2),
             "cached": self.cached,
             "detail": self.detail,
@@ -135,6 +144,26 @@ class EvalReport:
     def cache_hits(self) -> int:
         return sum(1 for r in self.results if r.cached)
 
+    @property
+    def cache_read_tokens(self) -> int:
+        """Input tokens the provider served from its prefix cache."""
+        return sum(r.cache_read_tokens for r in self.results)
+
+    @property
+    def billable_tokens(self) -> int:
+        """Tokens charged against the provider's rate limits."""
+        return sum(r.billable_tokens for r in self.results)
+
+    @property
+    def prefix_cache_rate(self) -> float:
+        """Share of input tokens served from the provider's prefix cache.
+
+        The direct check that database grouping is working. On a fresh run over
+        Spider dev this should sit near 0.8; a collapse to zero means the
+        ordering was lost or the cache expired mid-run.
+        """
+        return self.cache_read_tokens / self.input_tokens if self.input_tokens else 0.0
+
     def failures(self) -> list[ExampleResult]:
         """Incorrect results, excluding rows where the benchmark itself is broken."""
         return [
@@ -154,9 +183,32 @@ class EvalReport:
             "extraction_failures": self.extraction_failures,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "billable_tokens": self.billable_tokens,
+            "prefix_cache_rate": round(self.prefix_cache_rate, 4),
             "cache_hits": self.cache_hits,
             "wall_clock_s": round(self.wall_clock_s, 2),
         }
+
+
+def group_by_database(examples: Sequence[Example]) -> list[Example]:
+    """Reorder so every database's questions are contiguous.
+
+    This is a cost optimization with a large effect. Groq caches identical
+    prompt prefixes and excludes cached tokens from its rate limits, and the
+    rendered message is ``[system prompt][schema][question]``. Visiting a
+    database's questions back to back means its schema is paid for once instead
+    of once per question. Measured over Spider dev that is an 83% reduction in
+    billable tokens, which is what brings the full experiment inside the free
+    tier.
+
+    Databases and the examples within them keep their original relative order,
+    so the reordering stays deterministic and reproducible.
+    """
+    buckets: dict[str, list[Example]] = {}
+    for ex in examples:
+        buckets.setdefault(ex.db_id, []).append(ex)
+    return [ex for bucket in buckets.values() for ex in bucket]
 
 
 def evaluate_prompt(
@@ -165,12 +217,19 @@ def evaluate_prompt(
     timeout_s: float = 10.0,
     progress: ProgressFn | None = None,
     keep_raw: bool = False,
+    group_databases: bool = True,
 ) -> EvalReport:
     """Generate and score SQL for every example.
 
     Sequential by design. The target model's free tier allows 30 requests per
     minute, so concurrency would mostly produce 429s, and serial execution keeps
     the trace order deterministic.
+
+    Examples are evaluated grouped by database (see :func:`group_by_database`)
+    unless ``group_databases`` is False. This changes only the order of calls,
+    never their content, so it cannot affect accuracy: each generation depends
+    on its own prompt alone, and :attr:`EvalReport.correctness` is keyed by
+    example id rather than position.
     """
     report = EvalReport(
         prompt_version_id=agent.prompt.version_id,
@@ -178,9 +237,11 @@ def evaluate_prompt(
         model_id=agent.model_id,
     )
 
+    ordered = group_by_database(examples) if group_databases else list(examples)
+
     started = time.perf_counter()
-    total = len(examples)
-    for i, ex in enumerate(examples, start=1):
+    total = len(ordered)
+    for i, ex in enumerate(ordered, start=1):
         generation = agent.generate_sql(str(ex.db_path), ex.question)
         scored = score_prediction(
             ex.db_path, generation.sql, ex.gold, timeout_s=timeout_s
@@ -190,6 +251,7 @@ def evaluate_prompt(
             example_id=ex.id,
             question=ex.question,
             difficulty=ex.difficulty,
+            db_id=ex.db_id,
             gold=ex.gold,
             predicted=generation.sql,
             correct=scored.correct,
@@ -197,6 +259,7 @@ def evaluate_prompt(
             raw_text=generation.raw_text if keep_raw else "",
             input_tokens=generation.input_tokens,
             output_tokens=generation.output_tokens,
+            cache_read_tokens=generation.cache_read_tokens,
             latency_ms=generation.latency_ms,
             cached=generation.cached,
             detail=scored.detail,

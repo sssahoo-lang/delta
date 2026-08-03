@@ -85,3 +85,7 @@ def test_gold_is_ordered_detection():
     assert gold_is_ordered("select a from t order   by a desc")
     assert not gold_is_ordered("SELECT a FROM t GROUP BY a")
     assert not gold_is_ordered("SELECT a FROM t")
+    # ORDER BY inside a subquery must not make the outer result ordered.
+    assert not gold_is_ordered(
+        "SELECT count(*) FROM (SELECT a FROM t ORDER BY a LIMIT 3) AS s"
+    )
