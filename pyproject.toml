@@ -38,6 +38,10 @@ packages = ["delta"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Import the package from the working tree rather than relying on the editable
+# install's .pth, which does not get applied under the console-script entry
+# point. Without this, `.venv/bin/pytest` fails while `python -m pytest` works.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
