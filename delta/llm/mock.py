@@ -47,6 +47,18 @@ SKILL_TRIGGERS: dict[str, tuple[str, ...]] = {
     Skill.DISTINCT: ("distinct", "unique values", "deduplicate"),
 }
 
+# Column-name fragments too common to indicate that a question means a second
+# table. Without this filter, "the names of students" appears to reference every
+# table that happens to have a *_name column.
+GENERIC_COLUMN_PARTS = {
+    "name", "id", "title", "date", "year", "code", "type",
+    "number", "count", "value", "text", "time", "info",
+}
+
+# Score a candidate partner table must clear before a join is emitted. A table
+# name match scores 5, so this admits a named table or two distinctive columns.
+MIN_JOIN_EVIDENCE = 4
+
 NUMBER_WORDS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -55,6 +67,10 @@ NUMBER_WORDS = {
 
 _CREATE_TABLE_RE = re.compile(
     r"CREATE\s+TABLE\s+(\w+)\s*\((.*?)\)\s*;", re.IGNORECASE | re.DOTALL
+)
+
+_FK_RE = re.compile(
+    r"FOREIGN\s+KEY\s*\(\s*(\w+)\s*\)\s*REFERENCES\s+(\w+)\s*\(\s*(\w+)\s*\)", re.IGNORECASE
 )
 
 
@@ -69,9 +85,17 @@ class Column:
 
 
 @dataclass
+class ForeignKey:
+    from_col: str
+    ref_table: str
+    ref_col: str
+
+
+@dataclass
 class Table:
     name: str
     columns: list[Column] = field(default_factory=list)
+    foreign_keys: list[ForeignKey] = field(default_factory=list)
 
     def column_names(self) -> list[str]:
         return [c.name for c in self.columns]
@@ -83,14 +107,24 @@ class Table:
                 return lowered[cand.lower()]
         return None
 
+    def fk_to(self, table_name: str) -> ForeignKey | None:
+        return next(
+            (fk for fk in self.foreign_keys if fk.ref_table.lower() == table_name.lower()), None
+        )
+
 
 def parse_schema(rendered: str) -> list[Table]:
     """Recover tables and columns from the rendered CREATE TABLE schema."""
     tables: list[Table] = []
     for match in _CREATE_TABLE_RE.finditer(rendered):
         name = match.group(1)
+        body = match.group(2)
         columns: list[Column] = []
-        for line in match.group(2).splitlines():
+        foreign_keys = [
+            ForeignKey(from_col=m.group(1), ref_table=m.group(2), ref_col=m.group(3))
+            for m in _FK_RE.finditer(body)
+        ]
+        for line in body.splitlines():
             line = line.strip().rstrip(",").strip()
             if not line:
                 continue
@@ -102,7 +136,7 @@ def parse_schema(rendered: str) -> list[Table]:
                 col_type = parts[1] if len(parts) > 1 else "TEXT"
                 columns.append(Column(name=parts[0], type=col_type.strip(",")))
         if columns:
-            tables.append(Table(name=name, columns=columns))
+            tables.append(Table(name=name, columns=columns, foreign_keys=foreign_keys))
     return tables
 
 
@@ -116,10 +150,26 @@ def _extract_number(question: str) -> float | None:
     if m:
         return float(m.group(1))
     lowered = question.lower()
-    for word, value in NUMBER_WORDS.items():
+    # Longest phrase first, so "one million" is not shadowed by "one".
+    for word in sorted(NUMBER_WORDS, key=len, reverse=True):
         if re.search(rf"\b{re.escape(word)}\b", lowered):
-            return float(value)
+            return float(NUMBER_WORDS[word])
     return None
+
+
+def _sentence_initial_words(question: str) -> set[str]:
+    """Words capitalized by grammar rather than because they are names.
+
+    Checked for every sentence, not just the first: questions like "How many
+    students...? Show the department name." capitalize "Show" mid-question, and
+    treating it as a proper noun invents a bogus WHERE clause.
+    """
+    starts = set()
+    for sentence in re.split(r"(?<=[.?!])\s+", question.strip()):
+        first = sentence.strip().split(" ")[:1]
+        if first:
+            starts.add(first[0].strip(",;:"))
+    return starts
 
 
 def _singular(word: str) -> str:
@@ -156,6 +206,62 @@ def _label_column(table: Table) -> Column:
     )
 
 
+def _pick_join_partner(question: str, tables: list[Table], primary: Table) -> Table | None:
+    """A second table the question refers to and that joins to ``primary``.
+
+    Only direct foreign-key relationships in either direction are considered.
+    Multi-hop join paths are intentionally out of reach, which keeps some of the
+    hardest questions unreachable and preserves headroom above the mock's ceiling.
+    """
+    words = {w.lower() for w in re.findall(r"[a-zA-Z_]+", question)}
+    words |= {_singular(w) for w in words}
+
+    best, best_score = None, 0
+    for candidate in tables:
+        if candidate.name == primary.name:
+            continue
+        if not (primary.fk_to(candidate.name) or candidate.fk_to(primary.name)):
+            continue
+
+        score = 0
+        cname = candidate.name.lower()
+        if cname in words or _singular(cname) in words:
+            score += 5
+        # Only distinctive column names count. Matching on generic parts like
+        # "name" or "id" would drag a second table into nearly every question,
+        # since "the names of students" mentions neither departments nor a join.
+        score += sum(
+            2
+            for col in candidate.column_names()
+            if col.lower() in words
+            or any(
+                p in words
+                for p in col.lower().split("_")
+                if len(p) > 3 and p not in GENERIC_COLUMN_PARTS
+            )
+        )
+        if score > best_score:
+            best, best_score = candidate, score
+
+    return best if best_score >= MIN_JOIN_EVIDENCE else None
+
+
+def _join_clause(primary: Table, partner: Table) -> str | None:
+    fk = primary.fk_to(partner.name)
+    if fk:
+        return (
+            f"{primary.name} AS T1 JOIN {partner.name} AS T2 "
+            f"ON T1.{fk.from_col} = T2.{fk.ref_col}"
+        )
+    fk = partner.fk_to(primary.name)
+    if fk:
+        return (
+            f"{primary.name} AS T1 JOIN {partner.name} AS T2 "
+            f"ON T1.{fk.ref_col} = T2.{fk.from_col}"
+        )
+    return None
+
+
 def _mentioned_column(question: str, table: Table) -> Column | None:
     words = {w.lower() for w in re.findall(r"[a-zA-Z_]+", question)}
     for col in table.columns:
@@ -188,6 +294,62 @@ def generate_sql(question: str, schema_text: str, skills: set[str]) -> str:
     label = _label_column(table)
     mentioned = _mentioned_column(question, table)
 
+    wants_distinct = any(p in q for p in ("distinct", "different", "unique"))
+    compares_to_aggregate = any(
+        p in q for p in ("above the average", "than the average", "above average", "more than the average")
+    )
+    excludes = any(p in q for p in ("do not", "does not", "never", "without any", "no "))
+
+    # Comparison against an aggregate needs a nested SELECT. Without the subquery
+    # skill the mock produces a bare filter and gets it wrong, which is exactly
+    # the failure the optimizer should learn to fix.
+    if compares_to_aggregate and Skill.SUBQUERY in skills:
+        num = (
+            mentioned
+            if mentioned and mentioned.is_numeric
+            else next((c for c in table.columns if c.is_numeric), None)
+        )
+        if num is not None:
+            return (
+                f"SELECT {label.name} FROM {table.name} "
+                f"WHERE {num.name} > (SELECT avg({num.name}) FROM {table.name})"
+            )
+
+    # Anti-join phrasing ("instructors who teach no course") needs NOT IN.
+    partner_for_exclusion = _pick_join_partner(question, tables, table)
+    if excludes and Skill.SUBQUERY in skills and partner_for_exclusion is not None:
+        fk = partner_for_exclusion.fk_to(table.name)
+        if fk:
+            return (
+                f"SELECT {label.name} FROM {table.name} WHERE {fk.ref_col} NOT IN "
+                f"(SELECT {fk.from_col} FROM {partner_for_exclusion.name} "
+                f"WHERE {fk.from_col} IS NOT NULL)"
+            )
+
+    # Two-table questions. The join is only reachable with the join skill, so a
+    # prompt that never mentions joining silently answers from one table.
+    partner = _pick_join_partner(question, tables, table) if Skill.JOIN in skills else None
+    join_from = _join_clause(table, partner) if partner else None
+    if join_from is not None:
+        partner_label = _label_column(partner)
+        if wants_each and Skill.GROUP in skills:
+            agg = "count(*)"
+            if wants_avg:
+                num = next((c for c in table.columns if c.is_numeric), None)
+                if num is not None:
+                    agg = f"avg(T1.{num.name})"
+            return (
+                f"SELECT T2.{partner_label.name}, {agg} FROM {join_from} "
+                f"GROUP BY T2.{partner_label.name}"
+            )
+        if wants_count:
+            counted = (
+                f"count(DISTINCT T1.{label.name})" if wants_distinct and Skill.DISTINCT in skills
+                else "count(*)"
+            )
+            return f"SELECT {counted} FROM {join_from}"
+        return f"SELECT T1.{label.name}, T2.{partner_label.name} FROM {join_from}"
+
     # WHERE clause, only for comparisons the question states explicitly.
     where = ""
     number = _extract_number(question)
@@ -200,8 +362,8 @@ def generate_sql(question: str, schema_text: str, skills: set[str]) -> str:
     if not where:
         quoted = re.findall(r"'([^']+)'", question)
         proper = re.findall(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)*)\b", question)
-        # Skip the sentence-initial word, which is capitalized by grammar not by name.
-        candidates = quoted + [p for p in proper if not question.strip().startswith(p)]
+        sentence_starts = _sentence_initial_words(question)
+        candidates = quoted + [p for p in proper if p.split(" ")[0] not in sentence_starts]
         text_col = table.find("name", "dept_name", "title")
         if candidates and text_col:
             where = f" WHERE {text_col.name} = '{candidates[0]}'"
@@ -217,6 +379,9 @@ def generate_sql(question: str, schema_text: str, skills: set[str]) -> str:
         return sql
 
     if wants_count:
+        if wants_distinct and Skill.DISTINCT in skills:
+            target = mentioned or _label_column(table)
+            return f"SELECT count(DISTINCT {target.name}) FROM {table.name}{where}"
         return f"SELECT count(*) FROM {table.name}{where}"
 
     if wants_avg:
