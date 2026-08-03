@@ -1,0 +1,107 @@
+[
+  {
+    "id": "s001",
+    "question": "How many students are there?",
+    "gold": "SELECT count(*) FROM students",
+    "difficulty": "easy",
+    "db_id": "sample"
+  },
+  {
+    "id": "s002",
+    "question": "List the names of all departments in alphabetical order.",
+    "gold": "SELECT dept_name FROM departments ORDER BY dept_name",
+    "difficulty": "easy",
+    "db_id": "sample"
+  },
+  {
+    "id": "s003",
+    "question": "What are the names of students with a GPA above 3.7?",
+    "gold": "SELECT name FROM students WHERE gpa > 3.7",
+    "difficulty": "easy",
+    "db_id": "sample"
+  },
+  {
+    "id": "s004",
+    "question": "What is the average salary of instructors?",
+    "gold": "SELECT avg(salary) FROM instructors",
+    "difficulty": "easy",
+    "db_id": "sample"
+  },
+  {
+    "id": "s005",
+    "question": "Which building houses the Physics department?",
+    "gold": "SELECT building FROM departments WHERE dept_name = 'Physics'",
+    "difficulty": "easy",
+    "db_id": "sample"
+  },
+  {
+    "id": "s006",
+    "question": "Show the name of each student along with their department name.",
+    "gold": "SELECT T1.name, T2.dept_name FROM students AS T1 JOIN departments AS T2 ON T1.dept_id = T2.dept_id",
+    "difficulty": "medium",
+    "db_id": "sample"
+  },
+  {
+    "id": "s007",
+    "question": "How many students are enrolled in each department? Show the department name and the count.",
+    "gold": "SELECT T2.dept_name, count(*) FROM students AS T1 JOIN departments AS T2 ON T1.dept_id = T2.dept_id GROUP BY T2.dept_name",
+    "difficulty": "medium",
+    "db_id": "sample"
+  },
+  {
+    "id": "s008",
+    "question": "What is the title of the course with the most enrollments?",
+    "gold": "SELECT T2.title FROM enrollments AS T1 JOIN courses AS T2 ON T1.course_id = T2.course_id GROUP BY T1.course_id ORDER BY count(*) DESC LIMIT 1",
+    "difficulty": "medium",
+    "db_id": "sample"
+  },
+  {
+    "id": "s009",
+    "question": "Find the names of the three students with the highest GPA, highest first.",
+    "gold": "SELECT name FROM students ORDER BY gpa DESC LIMIT 3",
+    "difficulty": "medium",
+    "db_id": "sample"
+  },
+  {
+    "id": "s010",
+    "question": "Which departments have a budget greater than one million? Give their names and budgets.",
+    "gold": "SELECT dept_name, budget FROM departments WHERE budget > 1000000",
+    "difficulty": "medium",
+    "db_id": "sample"
+  },
+  {
+    "id": "s011",
+    "question": "Show the names of departments that have more than two instructors.",
+    "gold": "SELECT T2.dept_name FROM instructors AS T1 JOIN departments AS T2 ON T1.dept_id = T2.dept_id GROUP BY T2.dept_name HAVING count(*) > 2",
+    "difficulty": "hard",
+    "db_id": "sample"
+  },
+  {
+    "id": "s012",
+    "question": "What are the names of students whose GPA is above the average GPA of all students?",
+    "gold": "SELECT name FROM students WHERE gpa > (SELECT avg(gpa) FROM students)",
+    "difficulty": "hard",
+    "db_id": "sample"
+  },
+  {
+    "id": "s013",
+    "question": "List the names of instructors who do not teach any course.",
+    "gold": "SELECT name FROM instructors WHERE inst_id NOT IN (SELECT inst_id FROM courses WHERE inst_id IS NOT NULL)",
+    "difficulty": "hard",
+    "db_id": "sample"
+  },
+  {
+    "id": "s014",
+    "question": "For each department, show the department name and the average grade its students have earned, but only for departments where that average is above 3.5.",
+    "gold": "SELECT T3.dept_name, avg(T1.grade) FROM enrollments AS T1 JOIN students AS T2 ON T1.student_id = T2.student_id JOIN departments AS T3 ON T2.dept_id = T3.dept_id GROUP BY T3.dept_name HAVING avg(T1.grade) > 3.5",
+    "difficulty": "extra",
+    "db_id": "sample"
+  },
+  {
+    "id": "s015",
+    "question": "Show the name of each instructor and the number of distinct students enrolled in the courses they teach, ordered by that count from highest to lowest.",
+    "gold": "SELECT T1.name, count(DISTINCT T3.student_id) FROM instructors AS T1 JOIN courses AS T2 ON T1.inst_id = T2.inst_id JOIN enrollments AS T3 ON T2.course_id = T3.course_id GROUP BY T1.name ORDER BY count(DISTINCT T3.student_id) DESC",
+    "difficulty": "extra",
+    "db_id": "sample"
+  }
+]

@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+.env
+
+# Spider is 206 MB and redistributable but not ours to vendor.
+data/spider_data/
+data/*.zip
+
+# Per-run artifacts. Only curated outputs in results/ are committed.
+runs/
+.cache/
+
+.DS_Store
+.ruff_cache/
+.pytest_cache/
