@@ -12,11 +12,18 @@ optimization loop) runs offline in CI at zero cost.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, fields
 from typing import Protocol
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+from tenacity.wait import wait_base
 
 from delta.config import (
     MOCK_MODEL,
@@ -26,6 +33,11 @@ from delta.config import (
 )
 from delta.llm.cache import ResponseCache, cache_key
 
+# Soft pacing for uncached Groq calls under the free-tier 6k TPM cap.
+# Typical billable request is a few hundred tokens; ~0.75s keeps burst pressure down
+# without slowing disk-cache hits.
+_UNCACHED_CALL_PACE_S = 0.75
+
 
 class MissingAPIKeyError(RuntimeError):
     """Raised with actionable guidance when a provider key is absent."""
@@ -33,6 +45,46 @@ class MissingAPIKeyError(RuntimeError):
 
 class RateLimitedError(RuntimeError):
     """Retryable provider throttling."""
+
+
+_RETRY_AFTER_RE = re.compile(
+    r"(?:try again in|retry[- ]after)[:\s]+(\d+(?:\.\d+)?)\s*(ms|s|m)?",
+    re.IGNORECASE,
+)
+
+
+def _parse_retry_after_seconds(message: str) -> float | None:
+    """Extract Groq/LiteLLM 'try again in Xs' / Retry-After style delays."""
+    match = _RETRY_AFTER_RE.search(message)
+    if not match:
+        return None
+    value = float(match.group(1))
+    unit = (match.group(2) or "s").lower()
+    if unit == "ms":
+        return value / 1000.0
+    if unit == "m":
+        return value * 60.0
+    return value
+
+
+class _wait_rate_limit(wait_base):
+    """Prefer provider-stated delay; otherwise exponential backoff.
+
+    Takes the max of the two so a tiny 'retry in 0.1s' cannot undercut backoff
+    when TPM is still saturated.
+    """
+
+    def __init__(self) -> None:
+        self._fallback = wait_exponential(multiplier=2, min=2, max=90)
+
+    def __call__(self, retry_state) -> float:
+        delay = float(self._fallback(retry_state))
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        if exc is not None:
+            stated = _parse_retry_after_seconds(str(exc))
+            if stated is not None:
+                delay = max(delay, stated + 0.5)
+        return delay
 
 
 @dataclass
@@ -109,8 +161,8 @@ class StrandsClient:
 
     @retry(
         retry=retry_if_exception_type(RateLimitedError),
-        wait=wait_exponential(multiplier=2, min=2, max=60),
-        stop=stop_after_attempt(5),
+        wait=_wait_rate_limit(),
+        stop=stop_after_attempt(8),
         reraise=True,
     )
     def _invoke(self, system_prompt: str, user_prompt: str) -> LLMResponse:
@@ -153,6 +205,8 @@ class StrandsClient:
             known = {f.name for f in fields(LLMResponse)} - {"cached"}
             return LLMResponse(**{k: v for k, v in hit.items() if k in known}, cached=True)
 
+        # Disk-cache misses only: stay under free-tier TPM without slowing hits.
+        time.sleep(_UNCACHED_CALL_PACE_S)
         response = self._invoke(system_prompt, user_prompt)
         self.cache.put(
             key,

@@ -20,6 +20,7 @@ Two properties are enforced to keep this honest:
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -416,22 +417,130 @@ class MockClient:
 
     def complete(self, system_prompt: str, user_prompt: str) -> LLMResponse:
         self.calls += 1
-        skills = available_skills(system_prompt)
+        system_l = (system_prompt or "").lower()
 
-        question = _question_from_prompt(user_prompt)
-        sql = generate_sql(question, user_prompt, skills)
+        # Reflection roles: the analyzer and proposer use fixed system prompts
+        # that are not the evolvable text-to-SQL instruction. Route those first
+        # so they do not fall through into SQL generation.
+        if "delta's analyzer" in system_l or "delta analyzer" in system_l:
+            text = _mock_analyze(user_prompt)
+        elif "delta's proposer" in system_l or "delta proposer" in system_l:
+            text = _mock_propose(user_prompt)
+        else:
+            skills = available_skills(system_prompt)
+            question = _question_from_prompt(user_prompt)
+            sql = generate_sql(question, user_prompt, skills)
+            text = f"```sql\n{sql}\n```"
 
         return LLMResponse(
-            text=f"```sql\n{sql}\n```",
+            text=text,
             model_id=self.model_id,
-            # Deterministic stand-in for token counts so cost accounting has
-            # something coherent to aggregate in mock runs.
             input_tokens=len(system_prompt.split()) + len(user_prompt.split()),
-            output_tokens=len(sql.split()),
+            output_tokens=len(text.split()),
             latency_ms=0.0,
             cached=False,
             stop_reason="end_turn",
         )
+
+
+def _mock_analyze(user_prompt: str) -> str:
+    """Deterministic diagnosis from the failure dump the analyzer sends."""
+    text = user_prompt.lower()
+    modes: list[str] = []
+    recs: list[str] = []
+
+    # Infer missing skills from what the current prompt section contains.
+    prompt_section = user_prompt
+    if "-----" in user_prompt:
+        parts = user_prompt.split("-----")
+        if len(parts) >= 2:
+            prompt_section = parts[1]
+    prompt_skills = available_skills(prompt_section)
+
+    if Skill.JOIN not in prompt_skills and (
+        "join" in text or "dept_name" in text or "wrong_rows" in text
+    ):
+        modes.append("multi-table questions fail because the prompt never mentions JOINs")
+        recs.append("Tell the model to JOIN tables on foreign keys when the question spans entities")
+    if Skill.GROUP not in prompt_skills and ("each" in text or "group" in text or "per " in text):
+        modes.append("aggregation-per-group questions fail without GROUP BY guidance")
+        recs.append("When the question says each/per, require GROUP BY on that column")
+    if Skill.ORDER not in prompt_skills and (
+        "highest" in text or "lowest" in text or "order" in text or "top " in text
+    ):
+        modes.append("ranking questions fail without ORDER BY / LIMIT guidance")
+        recs.append("For highest/lowest/top-N, require ORDER BY with LIMIT")
+    if Skill.SUBQUERY not in prompt_skills and (
+        "average" in text or "subquery" in text or "not in" in text
+    ):
+        modes.append("comparisons to aggregates fail without subquery guidance")
+        recs.append("When comparing against an average or aggregate, use a subquery")
+    if Skill.DISTINCT not in prompt_skills and (
+        "distinct" in text or "different" in text or "unique" in text
+    ):
+        modes.append("distinct-count questions fail without DISTINCT guidance")
+        recs.append("Use COUNT(DISTINCT x) when the question asks how many different things")
+    if "nothing extracted" in text or "pred_failed" in text:
+        modes.append("some answers are wrapped in prose instead of bare SQL")
+        recs.append("Require output to be only the SQL query, with no explanation")
+
+    if not modes:
+        modes.append("residual wrong-row errors on harder questions")
+        recs.append("Add SQLite dialect and column-selection guidance")
+
+    payload = {
+        "summary": "The system prompt is missing concrete SQL skills that show up in the failures.",
+        "failure_modes": modes[:5],
+        "recommendations": recs[:5],
+    }
+    return json.dumps(payload)
+
+
+def _mock_propose(user_prompt: str) -> str:
+    """Build a stronger prompt by unlocking skills the diagnosis asked for."""
+    # Start from the current prompt block if present.
+    current = ""
+    if "-----" in user_prompt:
+        parts = user_prompt.split("-----")
+        if len(parts) >= 2:
+            current = parts[1].strip()
+
+    base = current or (
+        "You are an expert SQLite analyst. Given a database schema and a question, "
+        "write one SQL query that answers it."
+    )
+    lowered = user_prompt.lower()
+    additions: list[str] = []
+    if "join" in lowered and "join" not in base.lower():
+        additions.append(
+            "When the question spans entities in different tables, JOIN them on their foreign keys."
+        )
+    if "group" in lowered and "group by" not in base.lower():
+        additions.append(
+            "When the question says \"each\" or \"per\", use GROUP BY on that grouping column."
+        )
+    if ("order" in lowered or "limit" in lowered or "highest" in lowered) and (
+        "order by" not in base.lower()
+    ):
+        additions.append(
+            "When the question asks for the highest, lowest, top, or first, use ORDER BY with LIMIT."
+        )
+    if "subquery" in lowered and "subquery" not in base.lower():
+        additions.append(
+            "When comparing against an aggregate such as an average, use a subquery."
+        )
+    if "distinct" in lowered and "distinct" not in base.lower():
+        additions.append(
+            "Use COUNT(DISTINCT x) when the question asks how many different or distinct things there are."
+        )
+    if "only the sql" not in base.lower() and "no explanation" not in base.lower():
+        additions.append(
+            "Output only the SQL query, with no explanation and no markdown fences. Use SQLite syntax."
+        )
+
+    if not additions:
+        return base
+    return base.rstrip() + "\n\nRules:\n- " + "\n- ".join(additions)
 
 
 def _question_from_prompt(user_prompt: str) -> str:

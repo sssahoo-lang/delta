@@ -1,4 +1,4 @@
-.PHONY: help install sample-db spider test lint baseline splits tokens real-path optimize compare clean
+.PHONY: help install sample-db spider test lint baseline splits tokens real-path reflect optimize compare clean
 
 help:
 	@echo "Delta - self-improving text-to-SQL agent"
@@ -9,6 +9,7 @@ help:
 	@echo "  make splits      Write data/splits.json (refuses to overwrite)"
 	@echo "  make tokens      Measure Spider prompt token sizes (offline)"
 	@echo "  make real-path   Live Groq headroom gate on 100 stratified examples"
+	@echo "  make reflect     Analyze failures and propose a new prompt (MOCK=1 offline)"
 	@echo "  make test        Run the test suite (no API calls, no network)"
 	@echo "  make lint        Ruff check"
 	@echo "  make baseline    Score the v0 prompt (use MOCK=1 for zero API calls)"
@@ -34,6 +35,9 @@ tokens:
 
 real-path:
 	.venv/bin/python scripts/run_real_path.py
+
+reflect:
+	.venv/bin/python scripts/run_reflect_checkpoint.py $(if $(MOCK),--mock,) --save
 
 test:
 	.venv/bin/pytest

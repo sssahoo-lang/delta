@@ -196,10 +196,10 @@ These separate the project from a weekend prompt-tweaking script.
 |---|---|---|
 | 0 | Execution harness, scoring, offline fixture, Spider downloader | **Done**, tag `v0.1` |
 | 1 | Target agent, evaluation harness, baseline number | **Done**, commit `57aa73f` |
-| 1.5 | Real-path token measurement; live Groq headroom gate | **Partial** — tokens measured; live run needs `GROQ_API_KEY` |
+| 1.5 | Real-path token measurement; live Groq headroom gate | **Done — gate FAILED** (v0 75%, hand-tuned 74%, gap −1% on n=100) |
 | 2 | Seeded splits, difficulty bucketing, bootstrap/McNemar, gate | **Done**, tag `v0.2` |
-| 3 | Analyzer and proposer agents | Not started |
-| 4 | Pareto archive, optimization loop | Not started (gate primitive exists) |
+| 3 | Analyzer and proposer agents | **Done** (mock checkpoint); real Gemini checkpoint pending |
+| 4 | Pareto archive, optimization loop | Not started (gate + reflect primitives exist) |
 | 5 | Random search, DSPy MIPROv2 and GEPA baselines, comparison table | Not started |
 | 6 | Multi-model routing polish | Partially done (token budget tracker exists) |
 | 7 | Related-work doc, README, CI | **Done** for scaffolding; results table still open |
@@ -378,20 +378,23 @@ Then `python scripts/download_spider.py` fetches the benchmark.
 
 ## 12. Immediate next steps
 
-Phase 2 is complete. Next:
+**Headroom gate failed on real Groq** (`results/real_path.json`): v0 **75%**, hand-tuned
+**74%**, gap **−1%** on 100 stratified Spider examples. Llama 3.1 8B already follows the weak
+seed well enough that the human prompt does not beat it. Building Phase 4 on this setup would
+optimize into noise.
 
-1. Set `GROQ_API_KEY` and run `python scripts/run_real_path.py` — the headroom gate (≥10 points
-   on 100 stratified examples) must pass before Phase 3.
-2. Phase 3: analyzer and proposer agents, with a manual quality checkpoint on ten proposals
-   against **real** failure traces (not the mock — the mock rewards keyword stuffing).
-3. Phase 4: wire the Pareto archive and optimization loop around the existing
-   `delta.optimizer.gate` primitives.
-4. `delta/trace/logger.py` — one JSONL record per generation.
+Options before continuing:
+1. Strengthen the human baseline (sample rows in schema; tighter rules) and re-measure.
+2. Change the seed so there is real climb room (weaker / differently broken v0).
+3. Reframe the experiment: optimize from v0 and compare Delta vs random/DSPy without requiring
+   hand-tuned to beat v0 by 10 points (hand-tuned stays a reference line, not a headroom proof).
+
+Do not start the full optimization loop until one of these is chosen.
 
 ### Known open items
 
-- Live Groq real-path validation is blocked until `GROQ_API_KEY` is set
-- Mock headroom (26.7% → 60.0%) is by construction (skill triggers); do not tune the proposer on it
+- Phase 3 analyzer/proposer exist offline; commit pending
+- TPM pacing/retries improved after the first rate-limit crash
 - Results table and DSPy baselines still open (Phase 5)
 
 ---
