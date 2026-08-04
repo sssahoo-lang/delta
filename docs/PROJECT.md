@@ -5,9 +5,8 @@ built so far, and what remains.
 
 - **Repository:** https://github.com/sssahoo-lang/delta
 - **Language:** Python 3.11
-- **Status:** Phases 0–2 complete of 8. Measurement core, seeded splits, stats, and
-  decoupled acceptance gate in place. Optimizer agents not yet built. Tag `v0.2`.
-- **Cost to date:** $0
+- **Status:** Work in progress. Phases 0–3 largely in place (harness, splits, stats,
+  analyzer/proposer). Full optimization loop and comparison table not done yet.
 
 ---
 
@@ -102,16 +101,20 @@ which is the central argument for per-model optimization.
 
 ---
 
-## 4. Cost model
+## 4. Models and infra
 
-Total recurring cost: **$0**. See [COST.md](COST.md) for the full arithmetic.
+| Role | Default |
+|---|---|
+| Target agent (SQL writer) | Groq `llama-3.1-8b-instant` |
+| Analyzer + proposer | Gemini Flash (optional Anthropic fallback) |
+| Offline / CI | Deterministic mock client |
 
-The binding Groq limit is **tokens** (6,000 TPM / 500,000 TPD), not the 14,400
-requests/day figure. Measured over Spider dev, a v0 prompt averages ~296 tokens; without
-prefix caching that is roughly 1,700 calls/day. Evaluation groups examples by `db_id` so
-Groq's automatic prefix cache serves each schema once per candidate — bringing a one-pass
-dev evaluation from ~306k tokens down to ~24k. Right-sized splits (100 / ~350 / ~400) plus
-a screening stage keep the full six-condition experiment inside about a week of free quota.
+Evaluation groups examples by `db_id` so shared prompt prefixes (system + schema) can be
+cached across questions in the same database. A disk cache stores completed completions for
+reproducible reruns. Rate-limit pacing and retries live in `delta/llm/providers.py`; token
+accounting lives in `delta/llm/budget.py`.
+
+Splits are right-sized for search (~100 train / ~350 val / ~400 test); see `data/splits.json`.
 
 ---
 
@@ -137,11 +140,12 @@ flowchart TD
         stats["Paired bootstrap and McNemar"]
     end
 
-    subgraph smith [Optimizer, not yet built]
+    subgraph smith [Optimizer]
         analyzer["Analyzer: diagnose failure clusters"]
         proposer["Proposer: draft candidate prompt"]
-        archive["Pareto archive"]
+        archive["Pareto archive - TODO"]
         gate["Acceptance gate"]
+        loop["Full search loop - TODO"]
     end
 
     train --> tagent
@@ -151,15 +155,15 @@ flowchart TD
     exec --> score
     score --> analyzer
     analyzer --> proposer
-    proposer --> archive
-    archive --> tprompt
+    proposer --> gate
     score --> gate
     val --> gate
     gate -->|accept| archive
-    gate -->|reject, log reason| analyzer
-    archive --> test
+    gate -->|reject| analyzer
+    archive --> loop
+    loop --> proposer
     test --> stats
-    stats --> results["results/comparison.md"]
+    stats --> results["results/comparison.md TODO"]
 ```
 
 Only the **system prompt** evolves. The user message (schema plus question) is rendered
@@ -369,10 +373,10 @@ python scripts/run_baseline.py --mock --compare    # headroom check
 delta info                    # what is runnable right now
 ```
 
-For real numbers, two free keys with no credit card required
-([console.groq.com](https://console.groq.com) and
-[aistudio.google.com](https://aistudio.google.com)) go into `.env`, copied from `.env.example`.
-Then `python scripts/download_spider.py` fetches the benchmark.
+For real-model runs, copy `.env.example` to `.env` and set `GROQ_API_KEY`
+([console.groq.com](https://console.groq.com)); optionally `GEMINI_API_KEY` for reflection
+([aistudio.google.com](https://aistudio.google.com)). Then
+`python scripts/download_spider.py` fetches the benchmark.
 
 ---
 
@@ -393,8 +397,8 @@ Do not start the full optimization loop until one of these is chosen.
 
 ### Known open items
 
-- Phase 3 analyzer/proposer exist offline; commit pending
-- TPM pacing/retries improved after the first rate-limit crash
+- Live Gemini reflect checkpoint still pending
+- Rate-limit pacing/retries in place after early provider 429s
 - Results table and DSPy baselines still open (Phase 5)
 
 ---
@@ -411,5 +415,5 @@ To be filled from `results/metrics.json` after Phase 5:
   ablation on identical splits and scoring, establishing that reflective proposal outperformed
   undirected sampling by [D] points.
 - Engineered a statistically gated acceptance loop rejecting candidate prompts without significant
-  held-out improvement or with per-difficulty regressions, and ran the entire pipeline on free-tier
-  inference at $0 through content-addressed response caching and two-tier model routing.
+  held-out improvement or with per-difficulty regressions, with content-addressed response caching
+  and two-tier model routing (fast target model + stronger reflection models).
